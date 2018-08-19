@@ -1,4 +1,5 @@
 /build/
 /dist/
 /iq2us_rss/*.pyc
+/iq2us_rss/__pycache__/
 /iq2us_rss.egg-info/

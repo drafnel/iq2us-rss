@@ -30,12 +30,17 @@ import datetime
 import io
 import logging
 import sys
-import urlparse
 
 import bs4
 import iso8601
 import requests
 import urllib3.util.retry
+
+if sys.version_info[0] < 3:
+    from urlparse import urlparse
+else:
+    from urllib.parse import urlparse
+    unicode = str
 
 
 _logger = logging.getLogger(__name__)
@@ -131,7 +136,7 @@ def find_podcasts(url, timeout=DEFAULT_TIMEOUT, session=None):
     """
     _logger.info("scraping debate page (%s)", url)
 
-    parts = urlparse.urlparse(url)
+    parts = urlparse(url)
 
     if parts.scheme == "file":
         _logger.debug("reading debate page from file %s", parts.path)
@@ -213,7 +218,7 @@ def find_debates(url, timeout=DEFAULT_TIMEOUT, session=None):
     """
     _logger.info("scraping iq2us sitemap (%s)", url)
 
-    parts = urlparse.urlparse(url)
+    parts = urlparse(url)
 
     if parts.scheme == "file":
         body = open(parts.path)
@@ -246,7 +251,7 @@ def find_debates(url, timeout=DEFAULT_TIMEOUT, session=None):
 
         url_item = unicode(loc.string)
 
-        parts = urlparse.urlparse(url_item)
+        parts = urlparse(url_item)
         if parts.path[:len(debate_path)] != debate_path:
             continue
 
