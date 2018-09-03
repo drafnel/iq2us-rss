@@ -317,7 +317,25 @@ def find_debate_podcasts(url, debate_filter=all_debates,
             _logger.error("failed retrieving debate page %s: %s", debate, e)
 
 
-def write_rss(fh, url, title, podcast_tuples):
+def _get_content_length(url, timeout, session):
+    """Return content length of content at url.
+    """
+    resp = session.head(url, timeout=timeout)
+    resp.raise_for_status()
+
+    while resp.is_redirect:
+        resp = session.send(resp.next, timeout=timeout)
+        resp.raise_for_status()
+
+    for key in resp.headers:
+        if key.lower() == 'content-length':
+            return resp.headers[key]
+
+    return 0
+
+
+def write_rss(fh, url, title, podcast_tuples, get_content_length=True,
+              timeout=DEFAULT_TIMEOUT, session=None):
     """Produce an rss feed for the podcast tuples.
 
     :param fh: output file handle
@@ -357,8 +375,23 @@ def write_rss(fh, url, title, podcast_tuples):
     fh.write(u'  <docs>https://validator.w3.org/feed/docs/rss2.html</docs>\n')
     fh.write(u'  <ttl>60</ttl>\n')
 
+    if get_content_length and not session:
+        session = _get_retry_session()
+
     for debate, podcast in podcast_tuples:
         pubdate = podcast.pubDate if podcast.pubDate else debate.last_modified
+
+        if get_content_length:
+            _logger.info("retrieving content length of podcast stream %s", podcast.url)
+            try:
+                content_length = _get_content_length(podcast.url, timeout, session)
+            except requests.exceptions.RequestException as e:
+                _logger.error("failed retrieving content length for %s: %s",
+                              podcast, e)
+                content_length = 0
+        else:
+            content_length = 0
+
         fh.write(u'  <item>\n')
         fh.write(u'    <title>{}</title>\n'.format(
             cgi.escape(podcast.title, quote=True)))
@@ -368,8 +401,8 @@ def write_rss(fh, url, title, podcast_tuples):
             cgi.escape(podcast.desc, quote=True)))
         fh.write(u'    <pubDate>{}</pubDate>\n'.format(
             pubdate.astimezone(iso8601.UTC).strftime(rfc822_format)))
-        fh.write(u'    <enclosure url="{}" length="0" type="{}" />\n'.format(
-            podcast.url, podcast.type))
+        fh.write(u'    <enclosure url="{}" length="{}" type="{}" />\n'.format(
+            podcast.url, content_length, podcast.type))
         fh.write(u'    <itunes:duration>{}</itunes:duration>\n'.format(
             podcast.duration))
         fh.write(u'  </item>\n')
