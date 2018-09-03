@@ -1,3 +1,4 @@
 beautifulsoup4
+fuzzywuzzy
 iso8601
 requests

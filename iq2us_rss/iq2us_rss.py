@@ -30,8 +30,10 @@ import datetime
 import io
 import logging
 import sys
+import xml.etree.ElementTree as ET
 
 import bs4
+import fuzzywuzzy.process
 import iso8601
 import requests
 import urllib3.util.retry
@@ -100,6 +102,8 @@ def get_parser():
     parser.add_argument("-o", "--output", help="output filename")
     parser.add_argument("url", help="iq2us sitemap url e.g. " +
                         "\"https://www.intelligencesquaredus.org/sitemap.xml\"")
+    parser.add_argument("--rss-url",
+                        help="extract publication dates from official iq2us rss feed")
 
     return parser
 
@@ -119,13 +123,15 @@ def _get_retry_session():
     return session
 
 
-def find_podcasts(url, timeout=DEFAULT_TIMEOUT, session=None):
+def find_podcasts(url, pubdate_lut, timeout=DEFAULT_TIMEOUT, session=None):
     """Extract podcast(s) from an iq2us debate page.
 
     Scrapes iq2us debate page and extracts podcasts it finds.
 
     :param url: URL for iq2us debate.
     :type url: str
+    :param pubdate_lut: lookup table title to publication date
+    :type pubdate_lut: dict
     :param timeout: connect and/or read timeout
     :type timeout: tuple(float, float) or float
     :param session: (optional) session to use
@@ -196,7 +202,16 @@ def find_podcasts(url, timeout=DEFAULT_TIMEOUT, session=None):
         for podcast in elem.find_all(class_="panoply-podcast"):
             for src in podcast.find_all("audio"):
                 _logger.debug("found audio tag: %s", src)
-                yield Podcast(unicode(src['data-title']), desc, pub_date,
+                title = unicode(src['data-title'])
+
+                if pubdate_lut:
+                    result, score = fuzzywuzzy.process.extractOne(
+                        title, pubdate_lut.keys())
+                    _logger.debug("pubdate search: (%s, %s)", result, score)
+                    if score >= 90:
+                        pub_date = pubdate_lut[result]
+
+                yield Podcast(title, desc, pub_date,
                               unicode(src.source['src']), unicode(src.source['type']),
                               unicode(src['data-duration']))
 
@@ -268,6 +283,68 @@ def find_debates(url, timeout=DEFAULT_TIMEOUT, session=None):
         yield Debate(url_item, lastmod)
 
 
+def load_rss_feed(url, timeout=DEFAULT_TIMEOUT, session=None):
+    """Load RSS feed.
+
+    Parses RSS podcast feed, extracts each podcast title and publication date.
+
+    :param url: URL of rss feed.
+    :type url: str
+    :param timeout: connect and/or read timeout
+    :type timeout: tuple(float, float) or float
+    :param session: (optional) session to use
+    :type session: :class:`requests.Session`
+
+    :returns: generator for podcast title and pubDate
+    :rtype: tuple(str, datetime.datetime)
+    """
+    _logger.info("loading rss feed from (%s)", url)
+
+    parts = urlparse(url)
+
+    if parts.scheme == "file":
+        tree = ET.parse(parts.path)
+        root = tree.getroot()
+    else:
+        if not session:
+            session = _get_retry_session()
+
+        resp = session.get(url, stream=True, timeout=timeout)
+        resp.raise_for_status()
+
+        tree = ET.parse(resp.raw)
+
+        resp.close()
+
+        root = tree.getroot()
+
+    channel = root.find("channel")
+    if channel is None:
+        _logger.error("malformed rss feed (%s), missing \"channel\"", url)
+        return
+
+    # FIXME: properly parse utc offset
+    rfc822_format = "%a, %d %b %Y %H:%M:%S -0000"
+
+    for item in channel.iter("item"):
+        title = item.find("title")
+        if title is None:
+            continue
+        pubdate_elem = item.find("pubDate")
+        if pubdate_elem is None:
+            continue
+        try:
+            pubdate = datetime.datetime.strptime(pubdate_elem.text,
+                                                 rfc822_format)
+        except ValueError as e:
+            _logger.warning("failed parsing publication date: %s", e)
+            continue
+
+        pubdate = pubdate.replace(tzinfo=iso8601.UTC)
+
+        yield (unicode(title.text), pubdate)
+
+
 def all_debates(debates):
     """Debate filter returning all debates.
     """
@@ -280,7 +357,7 @@ def all_podcasts(debate, podcasts):
     return podcasts
 
 
-def find_debate_podcasts(url, debate_filter=all_debates,
+def find_debate_podcasts(url, rss_url=None, debate_filter=all_debates,
                          podcast_filter=all_podcasts, timeout=DEFAULT_TIMEOUT,
                          session=None):
     """Extract debate podcasts from iq2us sitemap.
@@ -302,6 +379,13 @@ def find_debate_podcasts(url, debate_filter=all_debates,
     if not session:
         session = _get_retry_session()
 
+    pubdate_lut = {}
+    if rss_url:
+        for title, pubdate in load_rss_feed(rss_url, timeout=timeout, session=session):
+            pubdate_lut[title] = pubdate
+        _logger.info("loaded %s entries into publication date lut", len(pubdate_lut))
+        _logger.debug("pubdate lut: %s", pubdate_lut)
+
     for debate in debate_filter(find_debates(url, timeout=timeout, session=session)):
 
         _logger.info("found %s", debate)
@@ -309,6 +393,7 @@ def find_debate_podcasts(url, debate_filter=all_debates,
         try:
             for podcast in podcast_filter(debate,
                                           find_podcasts(debate.url,
+                                                        pubdate_lut,
                                                         timeout=timeout,
                                                         session=session)):
                 _logger.info("found %s", podcast)
@@ -482,7 +567,8 @@ def main():
         else:
             podcast_filter = all_podcasts
 
-    podcast_tuples = find_debate_podcasts(args.url, debate_filter=debate_filter,
+    podcast_tuples = find_debate_podcasts(args.url, rss_url=args.rss_url,
+                                          debate_filter=debate_filter,
                                           podcast_filter=podcast_filter)
 
     if args.sort:
