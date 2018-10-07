@@ -463,6 +463,7 @@ def write_rss(fh, url, title, podcast_tuples, get_content_length=True,
     if get_content_length and not session:
         session = _get_retry_session()
 
+    content_length = 0
     for debate, podcast in podcast_tuples:
         pubdate = podcast.pubDate if podcast.pubDate else debate.last_modified
 
@@ -474,8 +475,6 @@ def write_rss(fh, url, title, podcast_tuples, get_content_length=True,
                 _logger.error("failed retrieving content length for %s: %s",
                               podcast, e)
                 content_length = 0
-        else:
-            content_length = 0
 
         fh.write(u'  <item>\n')
         fh.write(u'    <title>{}</title>\n'.format(
