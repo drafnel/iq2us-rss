@@ -405,12 +405,8 @@ def find_debate_podcasts(url, rss_url=None, debate_filter=all_debates,
 def _get_content_length(url, timeout, session):
     """Return content length of content at url.
     """
-    resp = session.head(url, timeout=timeout)
+    resp = session.head(url, timeout=timeout, allow_redirects=True)
     resp.raise_for_status()
-
-    while resp.is_redirect:
-        resp = session.send(resp.next, timeout=timeout)
-        resp.raise_for_status()
 
     for key in resp.headers:
         if key.lower() == 'content-length':
