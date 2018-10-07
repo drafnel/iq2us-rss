@@ -267,7 +267,7 @@ def find_debates(url, timeout=DEFAULT_TIMEOUT, session=None):
         url_item = unicode(loc.string)
 
         parts = urlparse(url_item)
-        if parts.path[:len(debate_path)] != debate_path:
+        if not parts.path.startswith(debate_path):
             continue
 
         if urltag.lastmod:
